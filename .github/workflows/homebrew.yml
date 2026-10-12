@@ -36,7 +36,7 @@ jobs:
         with:
           key: homebrew-linux
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build gdb libx11-dev libxext-dev libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev xvfb xauth
       - name: Build relinker and libraries
         working-directory: anyps5
         run: |
