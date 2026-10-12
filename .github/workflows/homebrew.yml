@@ -25,6 +25,7 @@ jobs:
           echo "ANYPS5_REF=$ANYPS5_REF" >> "$GITHUB_ENV"
           echo "TITLES=$TITLES" >> "$GITHUB_ENV"
           echo "SECONDS_PER_TITLE=$SECONDS_PER_TITLE" >> "$GITHUB_ENV"
+          echo "GDB_ALWAYS=${GDB_ALWAYS:-}" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ANYPS5_REPO }}
