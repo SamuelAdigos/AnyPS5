@@ -1,0 +1,58 @@
+name: Homebrew runs
+
+on:
+  push:
+    branches: [homebrew-runs]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-runs
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read config
+        run: |
+          source config.env
+          echo "ANYPS5_REPO=$ANYPS5_REPO" >> "$GITHUB_ENV"
+          echo "ANYPS5_REF=$ANYPS5_REF" >> "$GITHUB_ENV"
+          echo "TITLES=$TITLES" >> "$GITHUB_ENV"
+          echo "SECONDS_PER_TITLE=$SECONDS_PER_TITLE" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ANYPS5_REPO }}
+          ref: ${{ env.ANYPS5_REF }}
+          path: anyps5
+          submodules: recursive
+          persist-credentials: false
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: homebrew-linux
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev xvfb xauth
+      - name: Build relinker and libraries
+        working-directory: anyps5
+        run: |
+          echo "AnyPS5 $ANYPS5_REPO@$ANYPS5_REF $(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build --target relinker libs
+      - name: Run titles
+        run: |
+          for t in $TITLES; do
+            bash run_title.sh "$t" "$SECONDS_PER_TITLE"
+            cat "results/$t/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results
+          path: results
