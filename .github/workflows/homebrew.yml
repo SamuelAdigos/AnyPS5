@@ -13,19 +13,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      shards: ${{ steps.shards.outputs.shards }}
     steps:
       - uses: actions/checkout@v4
       - name: Read config
-        run: |
-          source config.env
-          echo "ANYPS5_REPO=$ANYPS5_REPO" >> "$GITHUB_ENV"
-          echo "ANYPS5_REF=$ANYPS5_REF" >> "$GITHUB_ENV"
-          echo "TITLES=$TITLES" >> "$GITHUB_ENV"
-          echo "SECONDS_PER_TITLE=$SECONDS_PER_TITLE" >> "$GITHUB_ENV"
-          echo "GDB_ALWAYS=${GDB_ALWAYS:-}" >> "$GITHUB_ENV"
+        run: sed 's/"//g' config.env >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ANYPS5_REPO }}
@@ -37,23 +33,90 @@ jobs:
         with:
           key: homebrew-linux
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build gdb libx11-dev libxext-dev libxrandr-dev libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build libx11-dev libxext-dev libxrandr-dev libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev
       - name: Build relinker and libraries
         working-directory: anyps5
         run: |
-          echo "AnyPS5 $ANYPS5_REPO@$ANYPS5_REF $(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "AnyPS5 $ANYPS5_REPO@$ANYPS5_REF $(git rev-parse --short HEAD)" | tee anyps5-version.txt
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build --target relinker libs
+          mkdir -p ../dist/libs ../dist/tools
+          cp build/core/relinker/relinker ../dist/
+          cp build/core/libs/libs/*.prx ../dist/libs/
+          cp tools/*.py ../dist/tools/
+          cp anyps5-version.txt ../dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Split titles into shards
+        id: shards
+        run: |
+          if [ "$TITLES" = "all" ]; then
+            TITLES=$(curl -fsSL https://api.github.com/repos/blackbearreloaded/ps5-homebrew-catalog/contents/apps | python3 -c 'import json,sys;print(" ".join(e["name"][:-5] for e in json.load(sys.stdin) if e["name"].endswith(".json")))')
+          fi
+          python3 -c 'import json,sys;t=sys.argv[2].split();n=int(sys.argv[1]);print("shards="+json.dumps([" ".join(t[i::n]) for i in range(n) if t[i::n]]))' "$SHARDS" "$TITLES" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        titles: ${{ fromJSON(needs.build.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read config
+        run: sed 's/"//g' config.env >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gdb libvulkan1 mesa-vulkan-drivers xvfb xauth libpipewire-0.3-0 libpulse0 libasound2t64
       - name: Run titles
         run: |
-          for t in $TITLES; do
-            bash run_title.sh "$t" "$SECONDS_PER_TITLE"
-            cat "results/$t/summary.txt" >> "$GITHUB_STEP_SUMMARY"
-          done
+          chmod +x dist/relinker
+          for t in ${{ matrix.titles }}; do bash run_title.sh "$t" "$SECONDS_PER_TITLE"; done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results
+          name: results-${{ strategy.job-index }}
           path: results
+
+  report:
+    needs: [build, run]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: results
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Report
+        run: |
+          {
+            cat dist/anyps5-version.txt
+            echo
+            echo "| Title | Name | Exit | First stop |"
+            echo "|---|---|---|---|"
+            for d in results/*/; do
+              t=$(basename "$d")
+              name=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$d/catalog.json" 2>/dev/null)
+              echo "| $t | $name | $(cat "$d/exit.txt" 2>/dev/null) | $(head -c 300 "$d/stop.txt" 2>/dev/null | tr '|' '/') |"
+            done
+          } | tee report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: |
+            results
+            report.md
