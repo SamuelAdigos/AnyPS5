@@ -47,10 +47,23 @@ cd run
 chmod +x app.elf
 timeout -s INT "$secs" xvfb-run -a -s "-screen 0 1920x1080x24" ./app.elf > "$out/stdout.txt" 2> "$out/stderr.txt"
 code=$?
+extra=()
+if [ -n "${GDB_THROW:-}" ]; then
+  cat > gdbthrow.cmd <<'GDB'
+set breakpoint pending on
+break __cxa_throw_nid_postfix
+commands
+printf "THROW: %s\n", ((char*(*)(void*))((*(void***)$rdi)[2]))($rdi)
+bt 12
+continue
+end
+GDB
+  extra=(-x gdbthrow.cmd)
+fi
 if [ "$code" = 134 ] || [ "$code" = 139 ] || [ "$code" = 133 ] || [ -n "${GDB_ALWAYS:-}" ]; then
   timeout -s KILL "$secs" xvfb-run -a -s "-screen 0 1920x1080x24" gdb -q -batch \
     -ex "handle SIGSEGV nostop noprint pass" -ex "handle SIGBUS nostop noprint pass" \
-    -ex "handle SIGUSR1 nostop noprint pass" -ex "handle SIGUSR2 nostop noprint pass" \
+    -ex "handle SIGUSR1 nostop noprint pass" -ex "handle SIGUSR2 nostop noprint pass" "${extra[@]}" \
     -ex run -ex "bt 40" -ex "thread apply all bt 8" --args ./app.elf > "$out/gdb.txt" 2>&1
 fi
 stop=$(cat "$out/stderr.txt" "$out/stdout.txt" | grep -v -E 'XIO:|after [0-9]+ requests|presentation thread cannot stop itself' \
