@@ -57,6 +57,16 @@ printf "THROW: %s\n", ((char*(*)(void*))((*(void***)$rdi)[2]))($rdi)
 bt 12
 continue
 end
+break sceVideoOutOpen
+commands
+printf "OPEN user=%d bus=%d index=%d param=%p ret=%p\n", $rdi, $rsi, $rdx, $rcx, *(void**)$rsp
+continue
+end
+break sceVideoOutClose
+commands
+printf "CLOSE handle=%d ret=%p\n", $rdi, *(void**)$rsp
+continue
+end
 GDB
   extra=(-x gdbthrow.cmd)
 fi
